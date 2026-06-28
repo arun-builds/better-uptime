@@ -1,0 +1,25 @@
+# Environment
+.env
+
+# Go build artifacts
+/target
+/dist
+/bin
+*.exe
+*.test
+*.out
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+
