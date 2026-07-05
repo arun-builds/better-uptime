@@ -9,14 +9,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func NewPool(ctx context.Context) (*pgxpool.Pool, error) {
+func NewPool(ctx context.Context, minConns, maxConns int32) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
 	if err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
-	cfg.MinConns = 3
-	cfg.MaxConns = 20
+	cfg.MinConns = minConns
+	cfg.MaxConns = maxConns
 
 	cfg.MaxConnIdleTime = 5 * time.Minute
 	cfg.MaxConnLifetime = time.Hour

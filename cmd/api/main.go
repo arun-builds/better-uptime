@@ -68,7 +68,7 @@ func main() {
 
 	ctx := context.Background()
 
-	pool, err := db.NewPool(ctx)
+	pool, err := db.NewPool(ctx, 3, 20)
 	if err != nil {
 		log.Fatal(err)
 	}

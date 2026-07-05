@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createWebsite = `-- name: CreateWebsite :one
@@ -68,6 +69,50 @@ func (q *Queries) DeleteWebsite(ctx context.Context, arg DeleteWebsiteParams) (i
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const listWebsitesBatch = `-- name: ListWebsitesBatch :many
+SELECT id, name, url, user_id, created_at, updated_at
+FROM websites
+WHERE (created_at, id) > (
+    $1::timestamp,
+    $2::uuid
+)
+ORDER BY created_at ASC, id ASC
+LIMIT $3
+`
+
+type ListWebsitesBatchParams struct {
+	CursorCreatedAt pgtype.Timestamp `json:"cursor_created_at"`
+	CursorID        uuid.UUID        `json:"cursor_id"`
+	BatchSize       int32            `json:"batch_size"`
+}
+
+func (q *Queries) ListWebsitesBatch(ctx context.Context, arg ListWebsitesBatchParams) ([]Website, error) {
+	rows, err := q.db.Query(ctx, listWebsitesBatch, arg.CursorCreatedAt, arg.CursorID, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Website
+	for rows.Next() {
+		var i Website
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Url,
+			&i.UserID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listWebsitesByUser = `-- name: ListWebsitesByUser :many
