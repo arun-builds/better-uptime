@@ -94,8 +94,37 @@ func main() {
 
 		for _, stream := range result {
 			for _, msg := range stream.Messages {
-				log.Printf("message id: %s, website_id: %v, url: %v, region_id: %v",
-					msg.ID, msg.Values["website_id"], msg.Values["url"], msg.Values["region_id"])
+				websiteIDStr, _ := msg.Values["website_id"].(string)
+				regionIDStr, _ := msg.Values["region_id"].(string)
+				url, _ := msg.Values["url"].(string)
+
+				websiteID, err := uuid.Parse(websiteIDStr)
+				if err != nil {
+					log.Printf("msg %s: invalid website_id %q: %v – skipping", msg.ID, websiteIDStr, err)
+					continue
+				}
+				regionID, err := uuid.Parse(regionIDStr)
+				if err != nil {
+					log.Printf("msg %s: invalid region_id %q: %v – skipping", msg.ID, regionIDStr, err)
+					continue
+				}
+				if url == "" {
+					log.Printf("msg %s: empty url – skipping", msg.ID)
+					continue
+				}
+
+				result := checkWebsite(websiteID, regionID, url)
+				log.Printf("msg %s: website_id=%s region_id=%s url=%s status=%s latency=%dms checked_at=%s",
+					msg.ID,
+					result.WebsiteID,
+					result.RegionID,
+					url,
+					result.Status,
+					result.ResponseTimeMs,
+					result.CheckedAt.Format(time.RFC3339),
+				)
+
+				// todo: persist the data
 			}
 		}
 	}
