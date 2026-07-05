@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/arun-builds/better-uptime/internal/db"
@@ -15,13 +19,21 @@ import (
 
 const WebsiteChecksStream = "website-checks"
 
+type Scheduler struct {
+	queries *store.Queries
+	redis   *redis.Client
+	regions []store.Region
+}
+
 func main() {
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	pool, err := db.NewPool(ctx, 1, 2)
 	if err != nil {
 		log.Fatal(err)
@@ -30,83 +42,107 @@ func main() {
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     "localhost:6379",
-		Password: "", // no password
-		DB:       0,  // use default DB
+		Password: "",
+		DB:       0,
 		Protocol: 2,
 	})
+	defer rdb.Close()
 
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		log.Fatal(err)
 	}
 
-	// might be handy in case of connection string
-	// opt, err := redis.ParseURL("redis://<user>:<pass>@localhost:6379/<db>")
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// client := redis.NewClient(opt)
-	//
-
 	queries := store.New(pool)
 
-	cursorTime := pgtype.Timestamp{
-		Time:  time.Time{},
-		Valid: true,
+	regions, err := queries.ListRegions(ctx)
+	if err != nil {
+		log.Fatal(err)
 	}
-	cursorID := uuid.Nil
-	const batchSize int32 = 100
 
+	s := &Scheduler{
+		queries: queries,
+		redis:   rdb,
+		regions: regions,
+	}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigCh
+		log.Println("shutting down scheduler...")
+		cancel()
+	}()
+
+	s.Run(ctx)
+}
+
+func (s *Scheduler) Run(ctx context.Context) {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
 	for {
-
-		cursorTime = pgtype.Timestamp{
-			Time:  time.Time{},
-			Valid: true,
+		select {
+		case <-ticker.C:
+			s.schedule(ctx)
+		case <-ctx.Done():
+			log.Println("scheduler stopped")
+			return
 		}
-		cursorID = uuid.Nil
+	}
+}
 
-		websites, err := queries.ListWebsitesBatch(ctx, store.ListWebsitesBatchParams{
+func (s *Scheduler) schedule(ctx context.Context) {
+	log.Println("scheduler cycle starting")
+
+	cursorTime := pgtype.Timestamp{Time: time.Time{}, Valid: true}
+	cursorID := uuid.Nil
+	const batchSize int32 = 100
+
+	var totalJobs int64
+
+	for {
+		websites, err := s.queries.ListWebsitesBatch(ctx, store.ListWebsitesBatchParams{
 			CursorCreatedAt: cursorTime,
 			CursorID:        cursorID,
 			BatchSize:       batchSize,
 		})
 		if err != nil {
-			log.Panic(err)
+			log.Printf("error fetching websites batch: %v", err)
+			return
 		}
 		if len(websites) == 0 {
 			break
 		}
 
-		log.Println("database: ", websites)
+		log.Printf("loaded %d websites", len(websites))
 
-		pipe := rdb.Pipeline()
-
+		pipe := s.redis.Pipeline()
 		for _, website := range websites {
-			pipe.XAdd(ctx, &redis.XAddArgs{
-				Stream: WebsiteChecksStream,
-				Values: map[string]any{
-					"website_id": website.ID.String(),
-					"url":        website.Url,
-				},
-			})
+			for _, region := range s.regions {
+				stream := fmt.Sprintf("%s:%s", WebsiteChecksStream, region.CountryCode)
+				pipe.XAdd(ctx, &redis.XAddArgs{
+					Stream: stream,
+					Values: map[string]any{
+						"website_id": website.ID.String(),
+						"url":        website.Url,
+						"region_id":  region.ID.String(),
+					},
+				})
+			}
 		}
 
 		_, err = pipe.Exec(ctx)
 		if err != nil {
-			log.Panic(err)
+			log.Printf("error executing redis pipeline: %v", err)
 		}
 
-		log.Println("pushed to reids")
+		totalJobs += int64(len(websites) * len(s.regions))
 
 		last := websites[len(websites)-1]
 		cursorTime = last.CreatedAt
 		cursorID = last.ID
-
-		<-ticker.C
-
 	}
 
+	log.Printf("scheduler cycle complete, enqueued %d jobs", totalJobs)
 }
