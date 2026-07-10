@@ -124,6 +124,7 @@ func (s *Scheduler) schedule(ctx context.Context) {
 				pipe.XAdd(ctx, &redis.XAddArgs{
 					Stream: stream,
 					Values: map[string]any{
+						"id":         uuid.NewString(),
 						"website_id": website.ID.String(),
 						"url":        website.Url,
 						"region_id":  region.ID.String(),

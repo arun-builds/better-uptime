@@ -1,5 +1,6 @@
 -- name: InsertWebsiteTick :exec
 INSERT INTO website_ticks (
+    id,
     website_id,
     region_id,
     status,
@@ -11,8 +12,10 @@ VALUES (
     $2,
     $3,
     $4,
-    NOW()
-);
+    $5,
+    $6
+)
+ON CONFLICT (id) DO NOTHING;
 
 -- name: GetLatestTickForWebsite :one
 SELECT

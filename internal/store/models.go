@@ -80,6 +80,7 @@ type Website struct {
 }
 
 type WebsiteTick struct {
+	ID             uuid.UUID          `json:"id"`
 	WebsiteID      uuid.UUID          `json:"website_id"`
 	RegionID       uuid.UUID          `json:"region_id"`
 	Status         WebsiteStatus      `json:"status"`

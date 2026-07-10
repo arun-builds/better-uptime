@@ -19,11 +19,8 @@ import (
 )
 
 const (
-	// ResultsStream is the stream the Checker publishes to.
-	// Must match the constant in cmd/checker/main.go.
 	ResultsStream = "website-check-results"
 
-	// GroupName identifies this consumer group on the results stream.
 	GroupName = "persistence-workers"
 )
 
@@ -35,7 +32,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// --- PostgreSQL / TimescaleDB ---
 	pool, err := db.NewPool(ctx, 1, 4)
 	if err != nil {
 		log.Fatalf("db pool: %v", err)
@@ -44,7 +40,6 @@ func main() {
 
 	queries := store.New(pool)
 
-	// --- Redis ---
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     "localhost:6379",
 		Password: "",
@@ -57,8 +52,6 @@ func main() {
 		log.Fatalf("redis ping: %v", err)
 	}
 
-	// Join (or create) the consumer group.
-	// "0" means: on first start, claim all existing messages from the beginning.
 	err = rdb.XGroupCreateMkStream(ctx, ResultsStream, GroupName, "0").Err()
 	if err != nil && !isBusyGroup(err) {
 		log.Fatalf("create consumer group: %v", err)
@@ -68,7 +61,6 @@ func main() {
 	log.Printf("persistence worker starting: stream=%s, group=%s, consumer=%s",
 		ResultsStream, GroupName, consumerID)
 
-	// --- Graceful shutdown ---
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -77,7 +69,7 @@ func main() {
 		cancel()
 	}()
 
-	// --- Worker loop ---
+	// Worker loop
 	for {
 		select {
 		case <-ctx.Done():
@@ -110,10 +102,10 @@ func main() {
 				if err := handleMessage(ctx, queries, rdb, msg); err != nil {
 					// Error already logged inside handleMessage.
 					// Leave the message in the PEL; it will be retried.
+					// TODO: limit the retries
 					continue
 				}
 
-				// DB write succeeded — safe to acknowledge.
 				if err := rdb.XAck(ctx, ResultsStream, GroupName, msg.ID).Err(); err != nil {
 					log.Printf("msg %s: xack failed: %v", msg.ID, err)
 				}
@@ -123,12 +115,18 @@ func main() {
 }
 
 func handleMessage(ctx context.Context, q *store.Queries, rdb *redis.Client, msg redis.XMessage) error {
+	idStr, _ := msg.Values["id"].(string)
 	websiteIDStr, _ := msg.Values["website_id"].(string)
 	regionIDStr, _ := msg.Values["region_id"].(string)
 	statusStr, _ := msg.Values["status"].(string)
 	latencyStr, _ := msg.Values["response_time_ms"].(string)
 
-	// --- Validate & parse each field ---
+	ID, err := uuid.Parse(idStr)
+	if err != nil {
+		log.Printf("msg %s: invalid id %q – skipping", msg.ID, websiteIDStr)
+		return err
+	}
+
 	websiteID, err := uuid.Parse(websiteIDStr)
 	if err != nil {
 		log.Printf("msg %s: invalid website_id %q – skipping", msg.ID, websiteIDStr)
@@ -154,12 +152,8 @@ func handleMessage(ctx context.Context, q *store.Queries, rdb *redis.Client, msg
 	}
 	latencyMs := int32(latency64)
 
-	// --- Persist using the existing sqlc query ---
-	// InsertWebsiteTick sets created_at = NOW() server-side, which is correct:
-	// TimescaleDB partitions by this column and using the DB clock keeps all
-	// rows in the right hypertable chunk regardless of any clock skew on the
-	// Checker nodes.
 	if err := q.InsertWebsiteTick(ctx, store.InsertWebsiteTickParams{
+		ID:             ID,
 		WebsiteID:      websiteID,
 		RegionID:       regionID,
 		Status:         status,

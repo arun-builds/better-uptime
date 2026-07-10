@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const getLast24HoursTicksForWebsite = `-- name: GetLast24HoursTicksForWebsite :many
@@ -24,15 +25,23 @@ WHERE website_id = $1
 ORDER BY created_at DESC
 `
 
-func (q *Queries) GetLast24HoursTicksForWebsite(ctx context.Context, websiteID uuid.UUID) ([]WebsiteTick, error) {
+type GetLast24HoursTicksForWebsiteRow struct {
+	WebsiteID      uuid.UUID          `json:"website_id"`
+	RegionID       uuid.UUID          `json:"region_id"`
+	Status         WebsiteStatus      `json:"status"`
+	ResponseTimeMs int32              `json:"response_time_ms"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetLast24HoursTicksForWebsite(ctx context.Context, websiteID uuid.UUID) ([]GetLast24HoursTicksForWebsiteRow, error) {
 	rows, err := q.db.Query(ctx, getLast24HoursTicksForWebsite, websiteID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []WebsiteTick
+	var items []GetLast24HoursTicksForWebsiteRow
 	for rows.Next() {
-		var i WebsiteTick
+		var i GetLast24HoursTicksForWebsiteRow
 		if err := rows.Scan(
 			&i.WebsiteID,
 			&i.RegionID,
@@ -63,15 +72,23 @@ ORDER BY created_at DESC
 LIMIT 100
 `
 
-func (q *Queries) GetLatest100TicksForWebsite(ctx context.Context, websiteID uuid.UUID) ([]WebsiteTick, error) {
+type GetLatest100TicksForWebsiteRow struct {
+	WebsiteID      uuid.UUID          `json:"website_id"`
+	RegionID       uuid.UUID          `json:"region_id"`
+	Status         WebsiteStatus      `json:"status"`
+	ResponseTimeMs int32              `json:"response_time_ms"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetLatest100TicksForWebsite(ctx context.Context, websiteID uuid.UUID) ([]GetLatest100TicksForWebsiteRow, error) {
 	rows, err := q.db.Query(ctx, getLatest100TicksForWebsite, websiteID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []WebsiteTick
+	var items []GetLatest100TicksForWebsiteRow
 	for rows.Next() {
-		var i WebsiteTick
+		var i GetLatest100TicksForWebsiteRow
 		if err := rows.Scan(
 			&i.WebsiteID,
 			&i.RegionID,
@@ -102,9 +119,17 @@ ORDER BY created_at DESC
 LIMIT 1
 `
 
-func (q *Queries) GetLatestTickForWebsite(ctx context.Context, websiteID uuid.UUID) (WebsiteTick, error) {
+type GetLatestTickForWebsiteRow struct {
+	WebsiteID      uuid.UUID          `json:"website_id"`
+	RegionID       uuid.UUID          `json:"region_id"`
+	Status         WebsiteStatus      `json:"status"`
+	ResponseTimeMs int32              `json:"response_time_ms"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetLatestTickForWebsite(ctx context.Context, websiteID uuid.UUID) (GetLatestTickForWebsiteRow, error) {
 	row := q.db.QueryRow(ctx, getLatestTickForWebsite, websiteID)
-	var i WebsiteTick
+	var i GetLatestTickForWebsiteRow
 	err := row.Scan(
 		&i.WebsiteID,
 		&i.RegionID,
@@ -117,6 +142,7 @@ func (q *Queries) GetLatestTickForWebsite(ctx context.Context, websiteID uuid.UU
 
 const insertWebsiteTick = `-- name: InsertWebsiteTick :exec
 INSERT INTO website_ticks (
+    id,
     website_id,
     region_id,
     status,
@@ -128,23 +154,29 @@ VALUES (
     $2,
     $3,
     $4,
-    NOW()
+    $5,
+    $6
 )
+ON CONFLICT (id) DO NOTHING
 `
 
 type InsertWebsiteTickParams struct {
-	WebsiteID      uuid.UUID     `json:"website_id"`
-	RegionID       uuid.UUID     `json:"region_id"`
-	Status         WebsiteStatus `json:"status"`
-	ResponseTimeMs int32         `json:"response_time_ms"`
+	ID             uuid.UUID          `json:"id"`
+	WebsiteID      uuid.UUID          `json:"website_id"`
+	RegionID       uuid.UUID          `json:"region_id"`
+	Status         WebsiteStatus      `json:"status"`
+	ResponseTimeMs int32              `json:"response_time_ms"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
 func (q *Queries) InsertWebsiteTick(ctx context.Context, arg InsertWebsiteTickParams) error {
 	_, err := q.db.Exec(ctx, insertWebsiteTick,
+		arg.ID,
 		arg.WebsiteID,
 		arg.RegionID,
 		arg.Status,
 		arg.ResponseTimeMs,
+		arg.CreatedAt,
 	)
 	return err
 }

@@ -95,9 +95,16 @@ func main() {
 
 		for _, stream := range streams {
 			for _, msg := range stream.Messages {
+				idStr, _ := msg.Values["id"].(string)
 				websiteIDStr, _ := msg.Values["website_id"].(string)
 				regionIDStr, _ := msg.Values["region_id"].(string)
 				url, _ := msg.Values["url"].(string)
+
+				ID, err := uuid.Parse(idStr)
+				if err != nil {
+					log.Printf("msg %s: invalid id %q: %v – skipping", msg.ID, websiteIDStr, err)
+					continue
+				}
 
 				websiteID, err := uuid.Parse(websiteIDStr)
 				if err != nil {
@@ -114,9 +121,9 @@ func main() {
 					continue
 				}
 
-				result := checkWebsite(websiteID, regionID, url)
+				result := checkWebsite(ID, websiteID, regionID, url)
 				log.Printf("msg %s: website_id=%s region_id=%s url=%s status=%s latency=%dms checked_at=%s",
-					msg.ID,
+					result.ID,
 					result.WebsiteID,
 					result.RegionID,
 					url,
@@ -125,15 +132,11 @@ func main() {
 					result.CheckedAt.Format(time.RFC3339),
 				)
 
-				// Publish the result event BEFORE acknowledging.
-				// If XADD fails the job stays pending in the PEL and will be
-				// retried on the next XReadGroup with "0" (reclaim pending).
 				if err := publishResult(ctx, rdb, result); err != nil {
 					log.Printf("msg %s: failed to publish result: %v – will retry", msg.ID, err)
 					continue
 				}
 
-				// Only acknowledge once the result is durably in the stream.
 				if err := rdb.XAck(ctx, streamName, GroupName, msg.ID).Err(); err != nil {
 					log.Printf("msg %s: XACK failed: %v", msg.ID, err)
 				}

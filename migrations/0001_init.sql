@@ -1,7 +1,6 @@
 -- +goose Up
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
-CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 
 CREATE TYPE website_status AS ENUM (
@@ -39,6 +38,8 @@ create table regions(
 );
 
 create table website_ticks(
+    id uuid primary key,
+
     website_id uuid not null references websites(id),
     region_id uuid not null references regions(id),
 
@@ -48,13 +49,9 @@ create table website_ticks(
     created_at timestamptz not null default now()
 );
 
-CREATE INDEX idx_ticks_website_created
-ON website_ticks (website_id, created_at DESC);
+CREATE INDEX idx_ticks_website_region_created
+ON website_ticks (website_id, region_id, created_at DESC);
 
-select create_hypertable(
-    'website_ticks',
-    by_range('created_at')
-);
 
 -- +goose Down
 
